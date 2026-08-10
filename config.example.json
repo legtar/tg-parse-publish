@@ -1,0 +1,7 @@
+{
+  "bot_token": "123456789:PASTE_YOUR_TELEGRAM_BOT_TOKEN",
+  "chat_id": 0,
+  "feed_channel": 0,
+  "llm_endpoints": "llm_endpoints.json",
+  "db": "data.db"
+}

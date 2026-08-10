@@ -1,0 +1,24 @@
+# СЕКРЕТЫ — никогда не коммитить
+config.json
+accounts.json
+main_account.json
+llm_endpoints.json
+*.session
+*.session-journal
+sessions/
+
+# данные / артефакты
+data.db
+data.db-wal
+data.db-shm
+*.lock
+*.log
+*.csv
+style_messages.txt
+style_profile.txt
+
+# python
+__pycache__/
+*.pyc
+.venv/
+venv/
