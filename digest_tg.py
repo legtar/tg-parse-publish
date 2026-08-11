@@ -156,13 +156,22 @@ def md_to_html(t):
 
 
 def send(text):
+    # режем по границам секций (пустая строка), чтобы пост не обрывался посреди списка
     chunks, cur = [], ""
-    for line in text.split("\n"):
-        if len(cur) + len(line) + 1 > 3800:
-            chunks.append(cur); cur = ""
-        cur += line + "\n"
+    for para in text.split("\n\n"):
+        block = para + "\n\n"
+        if len(block) > 3800:                       # секция сама больше лимита -> по строкам
+            for line in para.split("\n"):
+                if cur and len(cur) + len(line) + 1 > 3800:
+                    chunks.append(cur.rstrip()); cur = ""
+                cur += line + "\n"
+            cur += "\n"
+        else:
+            if cur and len(cur) + len(block) > 3800:
+                chunks.append(cur.rstrip()); cur = ""
+            cur += block
     if cur.strip():
-        chunks.append(cur)
+        chunks.append(cur.rstrip())
     for tgt in TARGETS:
         for ch in chunks:
             data = urllib.parse.urlencode({"chat_id": tgt, "text": ch, "parse_mode": "HTML",
@@ -177,6 +186,16 @@ def kfmt(n):
 
 
 def build_and_send():
+    # self-lock через abstract-socket (ядро, кросс-процессно, авто-освобождение при выходе):
+    # защита от двойного запуска — крон задублирован в user-crontab и /etc/cron.d (fcntl.flock тут ненадёжен)
+    import socket
+    global _LOCK_SOCK
+    _LOCK_SOCK = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+    try:
+        _LOCK_SOCK.bind("\0telegram_digest_lock")
+    except OSError:
+        print("digest уже выполняется — выходим (двойной запуск)")
+        return
     data = tiered_posts()
     msg = ("📊 <b>Топ постов</b>\n"
            "<i>по классу и размеру канала, нормировано на подписчиков. Окно у тира своё — "
