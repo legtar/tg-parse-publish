@@ -903,13 +903,19 @@ async def _monitor_worker(a, targets):
                 async for m in client.iter_messages(chat, min_id=last, limit=200):   # только НОВЫЕ
                     fid = m.from_id
                     if isinstance(fid, PeerUser) and m.message:
+                        s = m.sender                       # уже в ответе iter_messages, без доп. запроса
+                        un = getattr(s, "username", None) if s else None
+                        nm = (" ".join(x for x in (getattr(s, "first_name", None),
+                                                   getattr(s, "last_name", None)) if x)) if s else None
                         con.execute("insert or replace into comments(channel_id,msg_id,user_id,date,text,reactions)"
                                     " values(?,?,?,?,?,?)",
                                     (ch.id, m.id, fid.user_id, m.date.isoformat() if m.date else None,
                                      m.message, _msg_reactions(m)))
                         con.execute("insert into members(channel_id,user_id,username,name,phone,msgs)"
-                                    " values(?,?,?,?,?,1) on conflict(channel_id,user_id) do update set msgs=msgs+1",
-                                    (ch.id, fid.user_id, None, None, None))
+                                    " values(?,?,?,?,?,1) on conflict(channel_id,user_id) do update set "
+                                    "msgs=msgs+1, username=coalesce(excluded.username,members.username), "
+                                    "name=coalesce(excluded.name,members.name)",
+                                    (ch.id, fid.user_id, un, nm or None, None))
                         new += 1
                 con.commit()
                 if new:
