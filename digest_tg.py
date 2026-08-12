@@ -8,7 +8,11 @@ from datetime import datetime, timezone
 # секреты и адресаты — в config.json рядом со скриптом (см. config.example.json, в .gitignore)
 CFG = json.load(open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")))
 DB = CFG.get("db", "data.db")
-EP = json.load(open(CFG["llm_endpoints"]))[0]   # deepseek-v4-pro (мощнее для анализа тем)
+# эндпоинт выбираем ПО ИМЕНИ модели: llm_endpoints.json общий для всех проектов сервера,
+# порядок в нём меняется -> по индексу [0] можно молча уехать на чужую модель
+_EPS = json.load(open(CFG["llm_endpoints"]))
+_WANT = CFG.get("llm_model", "deepseek-v4-pro")
+EP = next((e for e in _EPS if e.get("model") == _WANT), _EPS[0])
 LLM_URL = EP["base"].rstrip("/") + "/chat/completions"
 KEY = EP.get("key") or EP.get("api_key")
 MODEL = EP["model"]
