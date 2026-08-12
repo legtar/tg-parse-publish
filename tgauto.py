@@ -91,7 +91,7 @@ def search_account():
 
 def work_accounts():
     """Рабочие аккаунты (без премиум-поисковика и замороженных)."""
-    accs = [a for a in load_accounts() if a.get("role") not in ("search", "frozen", "gift")]
+    accs = [a for a in load_accounts() if a.get("role") not in ("search", "frozen", "gift", "dead")]
     return accs or load_accounts()
 
 
