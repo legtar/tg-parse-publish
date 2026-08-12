@@ -22,6 +22,7 @@ Premium-аккаунт в discover автоматически даёт боле�
 """
 import argparse
 import asyncio
+import hashlib
 import html
 import json
 import random
@@ -92,6 +93,23 @@ def work_accounts():
     """Рабочие аккаунты (без премиум-поисковика и замороженных)."""
     accs = [a for a in load_accounts() if a.get("role") not in ("search", "frozen", "gift")]
     return accs or load_accounts()
+
+
+def split_buckets(targets, accs):
+    """Раздать цели аккаунтам СТАБИЛЬНО (rendezvous hashing).
+
+    Раньше было `buckets[i % len(accs)]` — при заморозке одного аккаунта менялось
+    len(accs) и ВСЯ раскладка съезжала: каждый аккаунт получал чужие каналы, кеш
+    access_hash промахивался, шёл массовый ResolveUsername -> FloodWait 12ч у всех.
+    Здесь канал закреплён за аккаунтом по хешу пары (цель, имя аккаунта), поэтому
+    выпадение аккаунта перераспределяет только ЕГО каналы.
+    """
+    buckets = [[] for _ in accs]
+    idx = {a["name"]: i for i, a in enumerate(accs)}
+    for t in targets:
+        owner = max(accs, key=lambda a: hashlib.md5(f"{t}|{a['name']}".encode()).digest())
+        buckets[idx[owner["name"]]].append(t)
+    return buckets
 
 
 def target_usernames(con, cls=None, limit=None):
@@ -366,9 +384,7 @@ async def cmd_parse(args):
         raise SystemExit("нет каналов: сначала discover или передай --channels")
     accs = work_accounts()
     # round-robin каналов по аккаунтам -> параллельно
-    buckets = [[] for _ in accs]
-    for i, cid in enumerate(ch_ids):
-        buckets[i % len(accs)].append(cid)
+    buckets = split_buckets(ch_ids, accs)
     res = await asyncio.gather(*(
         _account_worker(a, b, args.limit, args.members)
         for a, b in zip(accs, buckets) if b))
@@ -487,9 +503,7 @@ async def cmd_react(args):
     targets = args.channels or target_usernames(con, cls=args.cls, limit=args.limit)
     con.close()
     accs = work_accounts()
-    buckets = [[] for _ in accs]
-    for i, t in enumerate(targets):          # распределяем каналы по аккаунтам
-        buckets[i % len(accs)].append(t)
+    buckets = split_buckets(targets, accs)   # распределяем каналы по аккаунтам
     res = await asyncio.gather(*(_react_worker(a, b, args.count, args.pause)
                                  for a, b in zip(accs, buckets) if b))
     for line in [x for sub in res for x in sub]:
@@ -799,9 +813,7 @@ async def cmd_active(args):
     con.close()
     random.shuffle(targets)   # перемешиваем -> повторный прогон покроет пропущенные дохлыми прокси
     accs = work_accounts()
-    buckets = [[] for _ in accs]
-    for i, t in enumerate(targets):
-        buckets[i % len(accs)].append(t)
+    buckets = split_buckets(targets, accs)
     res = await asyncio.gather(*(_active_worker(a, b, args.msgs, args.save_text)
                                  for a, b in zip(accs, buckets) if b))
     for line in [x for sub in res for x in sub]:
@@ -847,9 +859,7 @@ async def cmd_hascomm(args):
     con.close()
     random.shuffle(targets)
     accs = work_accounts()
-    buckets = [[] for _ in accs]
-    for i, t in enumerate(targets):
-        buckets[i % len(accs)].append(t)
+    buckets = split_buckets(targets, accs)
     res = await asyncio.gather(*(_hascomm_worker(a, b) for a, b in zip(accs, buckets) if b))
     n1 = sum(r[0] for r in res); n0 = sum(r[1] for r in res); err = sum(r[2] for r in res)
     print(f"есть чат обсуждений: {n1} | нет: {n0} | ошибок/пропущено: {err}")
@@ -945,9 +955,7 @@ async def cmd_monitor(args):
     con = db(); targets = args.channels or target_usernames(con, cls=args.cls or "it_blogger", limit=args.limit); con.close()
     targets = sorted(targets)   # СТАБИЛЬНО: аккаунт всегда берёт свои каналы -> кеш access_hash работает
     accs = work_accounts()
-    buckets = [[] for _ in accs]
-    for i, t in enumerate(targets):
-        buckets[i % len(accs)].append(t)
+    buckets = split_buckets(targets, accs)
     res = await asyncio.gather(*(_monitor_worker(a, b) for a, b in zip(accs, buckets) if b))
     lines = [x for sub in res for x in sub]
     print("\n".join(lines) if lines else "новых комментов нет")
@@ -1000,9 +1008,7 @@ async def _admins_worker(a, targets):
 async def cmd_admins(args):
     con = db(); targets = args.channels or target_usernames(con, cls=args.cls or "it_blogger", limit=args.limit); con.close()
     accs = work_accounts()
-    buckets = [[] for _ in accs]
-    for i, t in enumerate(targets):
-        buckets[i % len(accs)].append(t)
+    buckets = split_buckets(targets, accs)
     for line in [x for sub in await asyncio.gather(
             *(_admins_worker(a, b) for a, b in zip(accs, buckets) if b)) for x in sub]:
         print(line)
@@ -1046,9 +1052,7 @@ async def _forwards_worker(a, targets, limit):
 async def cmd_forwards(args):
     con = db(); targets = args.channels or target_usernames(con, cls=args.cls or "it_blogger", limit=args.limit); con.close()
     accs = work_accounts()
-    buckets = [[] for _ in accs]
-    for i, t in enumerate(targets):
-        buckets[i % len(accs)].append(t)
+    buckets = split_buckets(targets, accs)
     for line in [x for sub in await asyncio.gather(
             *(_forwards_worker(a, b, args.msgs) for a, b in zip(accs, buckets) if b)) for x in sub]:
         print(line)
