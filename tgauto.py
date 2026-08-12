@@ -95,6 +95,18 @@ def work_accounts():
     return accs or load_accounts()
 
 
+def flood_left(con, account):
+    """Сколько секунд аккаунту ещё сидеть в кулдауне после FloodWait (0 = свободен)."""
+    r = con.execute("select until from flood where account=?", (account,)).fetchone()
+    return max(0, int(r[0] - time.time())) if r else 0
+
+
+def set_flood(con, account, seconds):
+    """Запомнить бан: пока он не истёк, аккаунт НЕ трогаем — иначе Telegram продлевает срок."""
+    con.execute("insert or replace into flood values(?,?)", (account, time.time() + seconds))
+    con.commit()
+
+
 def split_buckets(targets, accs):
     """Раздать цели аккаунтам СТАБИЛЬНО (rendezvous hashing).
 
@@ -260,6 +272,7 @@ def db():
         con.execute("alter table comments add column reactions integer")     # реакции на коммент
     if "chat_username" not in {r[1] for r in con.execute("pragma table_info(channels)")}:
         con.execute("alter table channels add column chat_username text")    # @ чата обсуждения -> ссылка на коммент
+    con.execute("create table if not exists flood(account text primary key, until real)")
     con.commit()
     return con
 
@@ -895,6 +908,9 @@ async def cmd_profiles(args):
 
 async def _monitor_worker(a, targets):
     con = db()
+    left = flood_left(con, a["name"])
+    if left:                       # не стучимся в забаненный аккаунт: попытки ПРОДЛЕВАЮТ бан
+        con.close(); return [f"{a['name']}: кулдаун ещё {left//60}м, пропуск"]
     client = make_client(a)
     out = []
     try:
@@ -938,7 +954,8 @@ async def _monitor_worker(a, targets):
                     out.append(f"{a['name']} {name}: +{new} свежих")
             except FloodWaitError as e:
                 if e.seconds > 600:                    # большой флуд -> не спим часами, выходим
-                    out.append(f"{a['name']}: FloodWait {e.seconds}s, стоп")
+                    set_flood(con, a["name"], e.seconds)   # и не трогаем аккаунт до конца бана
+                    out.append(f"{a['name']}: FloodWait {e.seconds}s, кулдаун до конца бана")
                     break
                 await asyncio.sleep(e.seconds)
             except Exception as e:
