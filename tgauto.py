@@ -240,6 +240,8 @@ def db():
         con.execute("alter table channels add column has_comments integer")  # 1=есть чат, 0=нет
     if "reactions" not in {r[1] for r in con.execute("pragma table_info(comments)")}:
         con.execute("alter table comments add column reactions integer")     # реакции на коммент
+    if "chat_username" not in {r[1] for r in con.execute("pragma table_info(channels)")}:
+        con.execute("alter table channels add column chat_username text")    # @ чата обсуждения -> ссылка на коммент
     con.commit()
     return con
 
@@ -898,6 +900,10 @@ async def _monitor_worker(a, targets):
                 if not linked:
                     continue
                 chat = await client.get_entity(linked)
+                # @ чата обсуждения: даёт прямую ссылку на коммент t.me/<chat>/<msg_id>
+                cu = getattr(chat, "username", None)
+                if cu:
+                    con.execute("update channels set chat_username=? where id=?", (cu, ch.id))
                 last = con.execute("select max(msg_id) from comments where channel_id=?", (ch.id,)).fetchone()[0] or 0
                 new = 0
                 async for m in client.iter_messages(chat, min_id=last, limit=200):   # только НОВЫЕ

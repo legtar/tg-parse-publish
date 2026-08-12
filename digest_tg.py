@@ -144,12 +144,23 @@ def llm_themes(limit=600):
 
 
 def hot_comments(limit=6):
+    """Топ комментов по реакциям. Ссылка t.me/<чат>/<msg_id> — только если чат обсуждения публичный."""
     c = sqlite3.connect(DB, timeout=60)
     try:
-        return c.execute("select text, reactions from comments where reactions>0 and text!='' "
-                         "order by reactions desc limit ?", (limit,)).fetchall()
-    except sqlite3.OperationalError:
-        return []
+        rows = c.execute(
+            "select co.text, co.reactions, ch.chat_username, co.msg_id, ch.username "
+            "from comments co join channels ch on ch.id = co.channel_id "
+            "where co.reactions>0 and co.text!='' order by co.reactions desc limit ?",
+            (limit,)).fetchall()
+    except sqlite3.OperationalError:      # старая БД без chat_username
+        return [(t, r, None) for t, r in c.execute(
+            "select text, reactions from comments where reactions>0 and text!='' "
+            "order by reactions desc limit ?", (limit,)).fetchall()]
+    out = []
+    for text, react, chat_un, mid, chan_un in rows:
+        link = f"https://t.me/{chat_un}/{mid}" if chat_un else (f"https://t.me/{chan_un}" if chan_un else None)
+        out.append((text, react, link))
+    return out
 
 
 def md_to_html(t):
@@ -226,8 +237,10 @@ def build_and_send():
     hot = hot_comments()
     if hot:
         msg += "🔥 <b>Горячие комменты</b>\n"
-        for text, rx in hot:
-            msg += f"❤{rx} — <i>{html.escape(text.replace(chr(10),' ')[:130])}</i>\n"
+        for text, rx, link in hot:
+            body = html.escape(text.replace(chr(10), " ")[:130])
+            msg += (f"❤{rx} — <a href=\"{link}\">{body}</a>\n" if link
+                    else f"❤{rx} — <i>{body}</i>\n")
         msg += "\n"
     themes = llm_themes()
     if themes:
