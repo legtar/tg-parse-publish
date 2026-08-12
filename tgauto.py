@@ -109,6 +109,8 @@ def set_flood(con, account, seconds):
 
 SHIFTS = 3          # смен в пуле: в каждом прогоне работает одна, остальные отдыхают (резерв)
 SHIFT_HOURS = 3     # длительность смены = период крона монитора
+# потолок каналов за ОДИН прогон монитора по стадии аккаунта (резолвы — главный источник флуда)
+MON_CAP = {"warming": 15, "ramping": 40, "active": None}   # None = без ограничения
 
 
 def shift_of(a, accs, shifts=SHIFTS):
@@ -939,6 +941,10 @@ async def _monitor_worker(a, targets):
     left = flood_left(con, a["name"])
     if left:                       # не стучимся в забаненный аккаунт: попытки ПРОДЛЕВАЮТ бан
         con.close(); return [f"{a['name']}: кулдаун ещё {left//60}м, пропуск"]
+    # свежий аккаунт не тянет десятки резолвов за прогон — именно так сгорела первая партия
+    cap = MON_CAP.get(acct_stage(a))
+    if cap:
+        targets = targets[:cap]
     client = make_client(a)
     out = []
     try:
