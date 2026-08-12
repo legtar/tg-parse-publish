@@ -107,6 +107,34 @@ def set_flood(con, account, seconds):
     con.commit()
 
 
+SHIFTS = 3          # смен в пуле: в каждом прогоне работает одна, остальные отдыхают (резерв)
+SHIFT_HOURS = 3     # длительность смены = период крона монитора
+
+
+def shift_of(a, accs, shifts=SHIFTS):
+    """Номер смены аккаунта. По позиции в отсортированном списке -> смены равного размера."""
+    names = sorted(x["name"] for x in accs)
+    return names.index(a["name"]) % shifts
+
+
+def current_shift(shifts=SHIFTS, now=None):
+    return int((now if now is not None else time.time()) // (SHIFT_HOURS * 3600)) % shifts
+
+
+def shift_accounts(accs, shifts=SHIFTS, now=None):
+    """Аккаунты, чья смена сейчас. Остальные отдыхают — это и есть резерв на случай бана.
+
+    Закрепление канала за аккаунтом (split_buckets) считается по ВСЕМУ пулу и не зависит
+    от смены, поэтому кеш access_hash не рушится: аккаунт всегда ходит по своим каналам,
+    просто реже.
+    """
+    if shifts <= 1:
+        return accs
+    cur = current_shift(shifts, now)
+    on = [a for a in accs if shift_of(a, accs, shifts) == cur]
+    return on or accs        # пустая смена (мало аккаунтов) -> работают все
+
+
 def split_buckets(targets, accs):
     """Раздать цели аккаунтам СТАБИЛЬНО (rendezvous hashing).
 
@@ -972,7 +1000,13 @@ async def cmd_monitor(args):
     con = db(); targets = args.channels or target_usernames(con, cls=args.cls or "it_blogger", limit=args.limit); con.close()
     targets = sorted(targets)   # СТАБИЛЬНО: аккаунт всегда берёт свои каналы -> кеш access_hash работает
     accs = work_accounts()
-    buckets = split_buckets(targets, accs)
+    buckets = split_buckets(targets, accs)                      # закрепление по ВСЕМУ пулу (кеш)
+    if not args.channels:                                       # ручной прогон по списку — без смен
+        shifts = 1 if getattr(args, "all_shifts", False) else getattr(args, "shifts", SHIFTS)
+        on = {a["name"] for a in shift_accounts(accs, shifts)}  # работает только текущая смена
+        print(f"смена {current_shift(shifts)+1}/{shifts}: {len(on)} из {len(accs)} аккаунтов, "
+              f"остальные в резерве")
+        accs, buckets = zip(*[(a, b) for a, b in zip(accs, buckets) if a["name"] in on]) or ((), ())
     res = await asyncio.gather(*(_monitor_worker(a, b) for a, b in zip(accs, buckets) if b))
     lines = [x for sub in res for x in sub]
     print("\n".join(lines) if lines else "новых комментов нет")
@@ -1241,6 +1275,8 @@ def main():
     mo.add_argument("--channels", nargs="*")
     mo.add_argument("--cls", help="класс (по умолч. it_blogger)")
     mo.add_argument("--limit", type=int, default=1000)
+    mo.add_argument("--shifts", type=int, default=SHIFTS, help=f"смен в пуле (по умолч. {SHIFTS})")
+    mo.add_argument("--all-shifts", action="store_true", help="разовый прогон всеми аккаунтами")
     hc = sub.add_parser("hascomm")  # детект: есть ли чат обсуждений
     hc.add_argument("--channels", nargs="*")
     hc.add_argument("--cls")
