@@ -27,11 +27,17 @@ import html
 import json
 import random
 import re
+import socket
 import sqlite3
 import time
 import urllib.request
 from collections import Counter
 from pathlib import Path
+
+# t.me / api.telegram.org резолвятся в IPv6, но по IPv6 с этого сервера ответа нет
+# (SSL handshake timeout) — web-парсер молча падал на каждом канале. По IPv4 всё отвечает.
+_gai = socket.getaddrinfo
+socket.getaddrinfo = lambda *a, **kw: [r for r in _gai(*a, **kw) if r[0] == socket.AF_INET]
 
 import socks
 from telethon import TelegramClient
