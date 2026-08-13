@@ -2,8 +2,13 @@
 """Тировый дайджест: каналы делятся по подписчикам, в каждом тире свой топ постов
 (нормировка на размер канала -> честное сравнение). + LLM-темы комментов.
   digest_tg.py [comments_N] [hours]   # по умолч. 300, 24ч"""
-import sys, os, re, html, json, sqlite3, urllib.request, urllib.parse
+import sys, os, re, time, html, json, socket, sqlite3, urllib.request, urllib.parse
 from datetime import datetime, timezone
+
+# api.telegram.org резолвится в IPv6, но по IPv6 он с этого сервера НЕ отвечает (таймаут SSL),
+# а по IPv4 отвечает за 0.2с. Форсируем IPv4 для всех исходящих запросов этого скрипта.
+_gai = socket.getaddrinfo
+socket.getaddrinfo = lambda *a, **kw: [r for r in _gai(*a, **kw) if r[0] == socket.AF_INET]
 
 # секреты и адресаты — в config.json рядом со скриптом (см. config.example.json, в .gitignore)
 CFG = json.load(open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")))
@@ -191,9 +196,19 @@ def send(text):
         for ch in chunks:
             data = urllib.parse.urlencode({"chat_id": tgt, "text": ch, "parse_mode": "HTML",
                                            "disable_web_page_preview": "true"}).encode()
-            r = json.load(urllib.request.urlopen(
-                urllib.request.Request(f"https://api.telegram.org/bot{BOT}/sendMessage", data=data), timeout=30))
-            print(f"[{tgt}] chunk ok:", r.get("ok"), "" if r.get("ok") else r.get("description"))
+            # сеть до api.telegram.org с этого сервера иногда отваливается по SSL —
+            # ретраим, и НЕ роняем весь дайджест из-за одного чанка
+            for attempt in range(4):
+                try:
+                    r = json.load(urllib.request.urlopen(urllib.request.Request(
+                        f"https://api.telegram.org/bot{BOT}/sendMessage", data=data), timeout=60))
+                    print(f"[{tgt}] chunk ok:", r.get("ok"), "" if r.get("ok") else r.get("description"))
+                    break
+                except Exception as e:
+                    if attempt == 3:
+                        print(f"[{tgt}] chunk ПРОПУЩЕН после 4 попыток: {type(e).__name__}: {str(e)[:80]}")
+                    else:
+                        time.sleep(5 * (attempt + 1))
 
 
 def kfmt(n):
@@ -242,7 +257,11 @@ def build_and_send():
             msg += (f"❤{rx} — <a href=\"{link}\">{body}</a>\n" if link
                     else f"❤{rx} — <i>{body}</i>\n")
         msg += "\n"
-    themes = llm_themes()
+    try:
+        themes = llm_themes()
+    except Exception as e:          # LLM недоступна -> шлём дайджест без блока тем, а не падаем
+        print("llm_themes недоступна:", type(e).__name__, str(e)[:80])
+        themes = ""
     if themes:
         msg += "💬 <b>О чём пишут</b>\n\n" + md_to_html(themes)
     send(msg)
