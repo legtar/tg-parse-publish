@@ -152,10 +152,13 @@ def hot_comments(limit=6):
     """Топ комментов по реакциям. Ссылка t.me/<чат>/<msg_id> — только если чат обсуждения публичный."""
     c = sqlite3.connect(DB, timeout=60)
     try:
+        # сперва те, где чат обсуждения публичный -> ссылка ведёт на САМ коммент;
+        # остальными (ссылка только на канал) добираем, если не набралось
         rows = c.execute(
             "select co.text, co.reactions, ch.chat_username, co.msg_id, ch.username "
             "from comments co join channels ch on ch.id = co.channel_id "
-            "where co.reactions>0 and co.text!='' order by co.reactions desc limit ?",
+            "where co.reactions>0 and co.text!='' "
+            "order by (ch.chat_username is null), co.reactions desc limit ?",
             (limit,)).fetchall()
     except sqlite3.OperationalError:      # старая БД без chat_username
         return [(t, r, None) for t, r in c.execute(
