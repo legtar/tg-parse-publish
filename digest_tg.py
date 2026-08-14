@@ -3,7 +3,7 @@
 (нормировка на размер канала -> честное сравнение). + LLM-темы комментов.
   digest_tg.py [comments_N] [hours]   # по умолч. 300, 24ч"""
 import sys, os, re, time, html, json, socket, sqlite3, urllib.request, urllib.parse
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 # api.telegram.org резолвится в IPv6, но по IPv6 он с этого сервера НЕ отвечает (таймаут SSL),
 # а по IPv4 отвечает за 0.2с. Форсируем IPv4 для всех исходящих запросов этого скрипта.
@@ -149,17 +149,22 @@ def llm_themes(limit=600):
 
 
 def hot_comments(limit=6):
-    """Топ комментов по реакциям. Ссылка t.me/<чат>/<msg_id> — только если чат обсуждения публичный."""
+    """Топ комментов по реакциям ЗА ПЕРИОД ОТЧЁТА (иначе в каждом выпуске одни и те же
+    рекордсмены за всё время). Если в окне пусто — расширяем, но всё равно не берём старьё.
+    Ссылка t.me/<чат>/<msg_id> — только если чат обсуждения публичный."""
     c = sqlite3.connect(DB, timeout=60)
+    q = ("select co.text, co.reactions, ch.chat_username, co.msg_id, ch.username "
+         "from comments co join channels ch on ch.id = co.channel_id "
+         "where co.reactions>0 and co.text!='' and co.date > ? "
+         # сперва те, где чат обсуждения публичный -> ссылка ведёт на САМ коммент
+         "order by (ch.chat_username is null), co.reactions desc limit ?")
     try:
-        # сперва те, где чат обсуждения публичный -> ссылка ведёт на САМ коммент;
-        # остальными (ссылка только на канал) добираем, если не набралось
-        rows = c.execute(
-            "select co.text, co.reactions, ch.chat_username, co.msg_id, ch.username "
-            "from comments co join channels ch on ch.id = co.channel_id "
-            "where co.reactions>0 and co.text!='' "
-            "order by (ch.chat_username is null), co.reactions desc limit ?",
-            (limit,)).fetchall()
+        rows = []
+        for hours in (HOURS, HOURS * 3, HOURS * 7):      # 24ч -> 3д -> 7д
+            cut = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+            rows = c.execute(q, (cut, limit)).fetchall()
+            if len(rows) >= limit:
+                break
     except sqlite3.OperationalError:      # старая БД без chat_username
         return [(t, r, None) for t, r in c.execute(
             "select text, reactions from comments where reactions>0 and text!='' "
