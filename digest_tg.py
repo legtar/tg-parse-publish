@@ -118,10 +118,19 @@ LEX = {
 }
 
 
-def quant_themes(limit=1000):
+def period_texts(limit=None):
+    """Комменты ЗА ПЕРИОД ОТЧЁТА (а не просто последние N по всей базе)."""
     c = sqlite3.connect(DB, timeout=60)
-    texts = [r[0].lower() for r in c.execute(
-        "select text from comments where text!='' order by date desc limit ?", (limit,)).fetchall()]
+    cut = (datetime.now(timezone.utc) - timedelta(hours=HOURS)).isoformat()
+    q = "select text from comments where text!='' and date > ? order by date desc"
+    if limit:
+        return [r[0] for r in c.execute(q + " limit ?", (cut, limit)).fetchall()]
+    return [r[0] for r in c.execute(q, (cut,)).fetchall()]
+
+
+def quant_themes(limit=None):
+    # регэксп бесплатный -> считаем по ВСЕМ комментам за сутки, а не по выборке
+    texts = [t.lower() for t in period_texts(limit)]
     counts = []
     for name, pat in LEX.items():
         rx = re.compile(pat, re.I)
@@ -132,10 +141,9 @@ def quant_themes(limit=1000):
     return counts[:14], len(texts)
 
 
-def llm_themes(limit=600):
-    c = sqlite3.connect(DB, timeout=60)
-    texts = [r[0] for r in c.execute(
-        "select text from comments where text!='' order by date desc limit ?", (limit,)).fetchall()]
+def llm_themes(limit=2000):
+    # 2000 комментов ~ $0.06 за прогон на deepseek-v4-pro (раз в сутки — копейки)
+    texts = period_texts(limit)
     if not texts:
         return ""
     sample = "\n".join("- " + t.replace("\n", " ")[:180] for t in texts)
