@@ -141,9 +141,22 @@ def quant_themes(limit=None):
     return counts[:14], len(texts)
 
 
-def llm_themes(limit=2000):
-    # 2000 комментов ~ $0.06 за прогон на deepseek-v4-pro (раз в сутки — копейки)
+MAX_LLM_CHARS = 280_000     # ~100k токенов: влезает в 128k контекста deepseek с запасом на ответ
+
+
+def llm_themes(limit=None):
+    """Все комменты за сутки, но не больше безопасного объёма контекста.
+    Замер: 2000 комментов = 47k prompt_tokens, значит ~100k токенов держим потолком."""
     texts = period_texts(limit)
+    total, cut_at = 0, len(texts)
+    for i, t in enumerate(texts):
+        total += min(len(t), 180) + 3
+        if total > MAX_LLM_CHARS:
+            cut_at = i
+            break
+    if cut_at < len(texts):
+        print(f"LLM: взято {cut_at} из {len(texts)} комментов (потолок контекста)")
+    texts = texts[:cut_at]
     if not texts:
         return ""
     sample = "\n".join("- " + t.replace("\n", " ")[:180] for t in texts)
